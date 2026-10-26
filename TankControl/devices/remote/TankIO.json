@@ -1,0 +1,48 @@
+{
+  "name": "TankIO",
+  "protocol": "modbus-tcp",
+  "modbusTcpConfig": {
+    "host": "host.docker.internal",
+    "port": 1502,
+    "slaveId": 1,
+    "timeout": 1000,
+    "ioGroups": [
+      {
+        "id": "55c4162b-7e9c-48c2-ba01-acf05450e095",
+        "name": "LevelRead",
+        "functionCode": "4",
+        "cycleTime": 100,
+        "offset": "0",
+        "length": 1,
+        "errorHandling": "keep-last-value",
+        "ioPoints": [
+          {
+            "id": "LevelRead_0",
+            "name": "LevelRead_0",
+            "type": "Analog Input (Input Register)",
+            "iecLocation": "%IW0",
+            "alias": "TankLevelInput"
+          }
+        ]
+      },
+      {
+        "id": "77f47ed3-2ce6-4655-8784-949c6d687397",
+        "name": "PumpWrite",
+        "functionCode": "5",
+        "cycleTime": 100,
+        "offset": "0",
+        "length": 1,
+        "errorHandling": "keep-last-value",
+        "ioPoints": [
+          {
+            "id": "PumpWrite_0",
+            "name": "PumpWrite_0",
+            "type": "Digital Output (Single Coil)",
+            "iecLocation": "%QX0.0",
+            "alias": "TankPumpOutput"
+          }
+        ]
+      }
+    ]
+  }
+}
