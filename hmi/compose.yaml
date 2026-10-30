@@ -1,0 +1,42 @@
+name: ot-hmi
+
+services:
+  database:
+    image: mysql/mysql-server:8.0.32
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: scadalts
+    command: ["--log_bin_trust_function_creators=1"]
+    volumes:
+      - scada-db:/var/lib/mysql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -uroot -proot -e 'SELECT 1' scadalts >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  scadalts:
+    image: scadalts/scadalts:latest
+    environment:
+      CATALINA_OPTS: "-Xms512m -Xmx1536m"
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - backend
+      - supervision
+
+volumes:
+  scada-db:
+
+networks:
+  backend:
+    internal: true
+  supervision:
+    name: ot-supervision

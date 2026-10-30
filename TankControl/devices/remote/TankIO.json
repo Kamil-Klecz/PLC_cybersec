@@ -4,8 +4,8 @@
   "modbusTcpConfig": {
     "host": "host.docker.internal",
     "port": 1502,
-    "slaveId": 1,
     "timeout": 1000,
+    "slaveId": 1,
     "ioGroups": [
       {
         "id": "55c4162b-7e9c-48c2-ba01-acf05450e095",
