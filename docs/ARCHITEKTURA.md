@@ -22,9 +22,18 @@ Skrypt w pythonie oblicza bilans objętości wody w zbiorniku: dopływ minus odp
 Przy włączonej pompie objętość rośnie netto o 6 l/s, a przy wyłączonej maleje o 2 l/s. 
 Nadmiar ponad pojemność jest rejestrowany jako przelew w `spilled_total_l`. 
 
-Do bilansu używany jest faktyczny czas między aktualizacjami, mierzony przez `time.monotonic()`. 
-Windows i Docker nie zapewniają tu ścisłych gwarancji czasowych. Zmiana polecenia pompy (on/off) 
+Do bilansu używany jest faktyczny czas między aktualizacjami, mierzony przez `time.monotonic()`.
+Windows i Docker nie zapewniają tu ścisłych gwarancji czasowych. Zmiana polecenia pompy (on/off)
 odebrana w trakcie kroku modelu jest uwzględniana dopiero w kolejnym cyklu obliczeń.
+
+`process_server.py` śledzi także czas ostatniego zaakceptowanego zapisu coil 0
+przez klienta Modbus. Jeśli przez 2 sekundy nie nadejdzie nowe polecenie,
+symulator wyłącza **rzeczywistą pompę w modelu**, nawet gdy zapamiętany coil
+nadal ma wartość 1. Powtarzany zapis tej samej wartości odświeża licznik;
+zmiana wartości nie jest konieczna. Log i CSV pokazują osobno `pump_cmd`
+(polecenie PLC), `pump_on` (stan zastosowany w modelu) oraz `command_fresh`
+(świeżość polecenia). HMI nadal odczytuje `PumpCmd` z PLC, więc przy awarii
+może pokazywać ostatnie polecenie, a nie faktyczny stan pompy.
 
 Powiązane pliki:
 [process.py](../process.py) zawiera klasę `Tank`, a
@@ -138,12 +147,14 @@ PLC ani procesu.
 - Projekt OpenPLC z regulatorem z histerezą.
 - Działająca pętla Python ↔ OpenPLC przez Modbus TCP.
 - Serwer Modbus w PLC udostępniający dane dla HMI.
+- Watchdog ostatniego zapisu polecenia pompy w symulatorze (test lokalny Modbus).
 
 ### 3.2. Do zrobienia
 
 - Suricata
 - Firewall
-- Watchdog w skrypcie python
+- Próba z zamrożonym PLC po uruchomieniu zmodyfikowanego symulatora i porównanie
+  przebiegów przed/po watchdogu.
 
 ## 4. Struktura folderów i plików
 
@@ -196,7 +207,7 @@ PLCSim/
 | `controller.py` | Regulator z histerezą w Pythonie, używany w poprzednim ćwiczeniu. W obecnym wariancie steruje PLC. |
 | `controller_client.py` | Alternatywny klient Modbus wykonujący regulator Pythona. Nie uruchamiać równocześnie z regulatorem OpenPLC: oba zapisują tę samą pompę. |
 | `requirements.txt` | Zależności Pythona; obecnie `pyModbusTCP==0.3.0`. |
-| `modbus_measurements.csv` | Plik zapisywany przez obecny `process_server.py`: czas, poziom, polecenie pompy użyte w kroku i łączny przelew. Każdy start nadpisuje plik. |
+| `modbus_measurements.csv` | Plik zapisywany przez obecny `process_server.py`: czas, poziom, stan pompy użyty w kroku, łączny przelew, polecenie PLC i świeżość polecenia. Każdy start nadpisuje plik. |
 | `measurements_modbus.csv` | Zachowany zapis wcześniejszego przebiegu z dodatkowymi kolumnami czasu kroku i objętości. Bieżący serwer nie zapisuje pod tą nazwą. |
 | `.venv/` | Lokalny interpreter i zainstalowane zależności; środowisko odtwarzalne z `requirements.txt`. |
 | `__pycache__/` | Automatycznie generowane pliki `.pyc`; nie są kodem źródłowym ani wynikami badań. |

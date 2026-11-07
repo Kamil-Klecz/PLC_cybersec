@@ -2,6 +2,7 @@
 import csv
 import time
 from pathlib import Path
+from threading import Lock
 
 from pyModbusTCP.server import DataBank, ModbusServer
 from process import Tank
@@ -12,12 +13,38 @@ DT_S = 0.1
 LEVEL_ADDRESS = 0
 PUMP_ADDRESS = 0
 LEVEL_SCALE = 100  # 1 jednostka rejestru = 0.01 procenta
+COMMAND_TIMEOUT_S = 2.0
+
+
+class CommandBank(DataBank):
+    """Zapamiętuje czas ostatniego zapisu polecenia pompy przez klienta Modbus."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._command_lock = Lock()
+        self._last_command_at = None
+
+    def set_coils(self, address, bit_list, srv_info=None):
+        accepted = super().set_coils(address, bit_list, srv_info)
+        if (accepted and srv_info is not None
+                and address <= PUMP_ADDRESS < address + len(bit_list)):
+            # on_coils_change nie wystarcza: wywołuje się tylko przy zmianie 0/1.
+            # PLC zapisuje cewkę cyklicznie, także gdy stan pompy jest stały.
+            with self._command_lock:
+                self._last_command_at = time.monotonic()
+        return accepted
+
+    def command_is_fresh(self, now):
+        with self._command_lock:
+            last_command_at = self._last_command_at
+        return (last_command_at is not None
+                and now - last_command_at <= COMMAND_TIMEOUT_S)
 
 
 def main():
     tank = Tank()
-    bank = DataBank(coils_size=1, d_inputs_size=0,
-                    h_regs_size=0, i_regs_size=1)
+    bank = CommandBank(coils_size=1, d_inputs_size=0,
+                       h_regs_size=0, i_regs_size=1)
     bank.set_input_registers(LEVEL_ADDRESS, [round(tank.level_pct * LEVEL_SCALE)])
     bank.set_coils(PUMP_ADDRESS, [False])
     server = ModbusServer(host=HOST, port=PORT, no_block=True, data_bank=bank)
@@ -27,12 +54,15 @@ def main():
         print(f"Serwer: {HOST}:{PORT}. Zatrzymaj Ctrl+C.", flush=True)
         with output.open("w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
-            writer.writerow(["time_s", "level_pct", "pump_on", "spilled_total_l"])
+            writer.writerow(["time_s", "level_pct", "pump_on", "spilled_total_l",
+                             "pump_cmd", "command_fresh"])
             start = previous = time.monotonic()
             next_print = start
             while True:
-                # Ta komenda obowiazuje w nastepnym przedziale modelu.
-                pump_on = bank.get_coils(PUMP_ADDRESS, 1)[0]
+                # Polecenie jest ważne tylko przy świeżych zapisach z PLC.
+                pump_cmd = bank.get_coils(PUMP_ADDRESS, 1)[0]
+                command_fresh = bank.command_is_fresh(time.monotonic())
+                pump_on = pump_cmd and command_fresh
                 time.sleep(DT_S)
                 now = time.monotonic()
                 elapsed = now - previous
@@ -42,11 +72,14 @@ def main():
                 bank.set_input_registers(
                     LEVEL_ADDRESS, [round(tank.level_pct * LEVEL_SCALE)])
                 writer.writerow([round(now - start, 3), round(tank.level_pct, 3),
-                                 int(pump_on), round(tank.spilled_total_l, 3)])
+                                 int(pump_on), round(tank.spilled_total_l, 3),
+                                 int(pump_cmd), int(command_fresh)])
                 file.flush()
                 if now >= next_print:
                     print(f"t={now - start:6.1f}s poziom={tank.level_pct:6.2f}% "
-                          f"pompa={int(pump_on)} przelew={tank.spilled_total_l:.2f}l",
+                          f"pompa={int(pump_on)} polecenie={int(pump_cmd)} "
+                          f"komunikacja={int(command_fresh)} "
+                          f"przelew={tank.spilled_total_l:.2f}l",
                           flush=True)
                     next_print = now + 1.0
     except KeyboardInterrupt:

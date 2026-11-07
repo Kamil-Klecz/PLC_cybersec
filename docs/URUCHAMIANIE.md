@@ -108,7 +108,12 @@ cd C:\OT\PLCSim
 
 **Pozostaw to okno otwarte.** Powinien pojawić się komunikat
 `Serwer: 0.0.0.0:1502` i kolejne pomiary. Przed uruchomieniem programu PLC
-poziom może spaść do zera.
+poziom może spaść do zera. W logu `polecenie` to ostatni coil zapisany przez
+PLC, `pompa` to stan zastosowany w modelu, a `komunikacja=0` oznacza brak
+jeszcze pierwszego zapisu polecenia albo brak nowego zapisu przez ponad
+2 sekundy. Wtedy model wymusza `pompa=0`.
+Każde uruchomienie skryptu nadpisuje `modbus_measurements.csv`; zachowaj
+poprzedni przebieg przed restartem, jeśli chcesz go porównać.
 
 Jeśli Windows zapyta o dostęp Pythona do sieci, zezwól na dostęp w używanej
 prywatnej sieci. Nie wyłączaj całej zapory Windows.
