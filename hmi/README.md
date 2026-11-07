@@ -1,7 +1,9 @@
 # HMI: Scada-LTS dla TankControl
 
 Codzienne uruchamianie i zatrzymywanie całego laboratorium opisuje
-[instrukcja uruchamiania](../docs/URUCHAMIANIE.md). Ten plik dotyczy konfiguracji HMI.
+[instrukcja uruchamiania](../docs/URUCHAMIANIE.md). Zawiera ona także eksport
+i import konfiguracji HMI na innym komputerze. Ten plik dotyczy ręcznego
+konfigurowania HMI.
 
 ## Architektura
 
@@ -36,7 +38,7 @@ Port 8443 nadal sluzy Editorowi.
 ## 2. Uruchom Scada-LTS
 
 Uruchom Docker Desktop i kontener ot-plc.
-W PowerShellu w D:\Coding\repos\PLCSim:
+W PowerShellu w folderze projektu (obecnie `D:\Coding\repos\PLC_cybersec`):
 
     docker compose -f hmi/compose.yaml up -d
     docker network connect ot-supervision ot-plc

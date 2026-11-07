@@ -6,14 +6,21 @@ zainstalowany. Potrzebne jest połączenie z Internetem.
 Wykonuj kroki po kolei. Polecenia wpisuj w **PowerShellu**, bez kopiowania
 znaczników otaczających bloki kodu.
 
+`C:\OT\PLCSim` w poleceniach jest przykładową lokalizacją na nowym komputerze.
+Na obecnym komputerze projekt znajduje się w `D:\Coding\repos\PLC_cybersec`;
+jeśli używasz innej lokalizacji, podstaw ją we wszystkich poleceniach `cd`.
+
 ## 1. Pobierz projekt
 
 1. Otwórz repozytorium projektu na GitHubie.
 2. Kliknij **Code → Download ZIP**.
 3. Rozpakuj archiwum. Przenieś i nazwij folder tak, aby plik `process_server.py`
-   znajdował się pod `C:\OT\PLCSim\process_server.py`. (może być inna loklizacja, wtedy zmień ścieżki w poleceniach poniżej)
+   znajdował się pod `C:\OT\PLCSim\process_server.py`.
 4. W tym samym folderze muszą znajdować się `requirements.txt`, `TankControl`
-   oraz `hmi`. Nie pracuj bezpośrednio wewnątrz ZIP-a.
+   oraz `hmi`. Sprawdź też obecność pliku
+   `hmi/scada-lts-config-ZAIMPORTUJ-DO-SCADALTS.json`. Nie pracuj bezpośrednio
+   wewnątrz ZIP-a. Jeśli pliku JSON nie ma w pobranym repozytorium, trzeba go
+   najpierw dodać i opublikować z komputera, na którym skonfigurowano HMI.
 
 ## 2. Zainstaluj Pythona i OpenPLC Editor
 
@@ -142,9 +149,43 @@ Konfiguracja komunikacji jest już w repozytorium. Nie dodawaj jej ponownie:
 | `PumpWrite` | FC05, offset `0`, długość `1`, cykl `100 ms` |
 | `TankHmi` | włączony serwer Modbus, `0.0.0.0`, port `502` |
 
-## 8. Utwórz źródło danych w Scada-LTS
+## 8. Zaimportuj konfigurację HMI na nowym komputerze
 
-Nowa baza jest pusta: punkty i Watch List trzeba utworzyć jeden raz.
+Konfiguracja utworzona w interfejsie Scada-LTS mieszka w bazie MySQL w wolumenie
+Dockera `ot-hmi_scada-db`, a nie w plikach Compose. Eksport JSON w
+`hmi/scada-lts-config-ZAIMPORTUJ-DO-SCADALTS.json` zawiera źródło
+`OpenPLC_Tank`, punkty `Tank_Level` i `Tank_PumpCmd`, listy obserwacyjne oraz
+widok `Tank_HMI`. Nie zawiera historii pomiarów ani kont użytkowników.
+
+Ten krok wykonaj **raz na nowej, pustej instancji Scada-LTS**, po uruchomieniu
+kontenerów i PLC. Przy zwykłym ponownym uruchomieniu na tym samym komputerze
+nie importuj konfiguracji ponownie: baza pozostaje w wolumenie.
+
+1. Otwórz [Scada-LTS](http://127.0.0.1:8080/Scada-LTS/) i zaloguj się.
+   Na świeżej instalacji konto początkowe to `admin` / `admin`; ustaw własne
+   hasło po pierwszym logowaniu.
+2. Otwórz [Import/Export](http://127.0.0.1:8080/Scada-LTS/emport.shtm).
+3. Otwórz lokalny plik `hmi/scada-lts-config-ZAIMPORTUJ-DO-SCADALTS.json` w
+   edytorze tekstu. Skopiuj **całą** jego zawartość do pola **Data** na stronie
+   Import/Export i kliknij **Import** w sekcji importu JSON. Poczekaj na wynik
+   importu i sprawdź komunikaty o błędach.
+4. W **Data sources** sprawdź, czy `OpenPLC_Tank` ma host `ot-plc`, port `502`
+   i jest włączone. Sprawdź odczyt obu punktów w **Watch List** oraz otwórz
+   **Graphical views → Tank_HMI**.
+
+Na tym kończy się konfiguracja HMI na nowym komputerze; **pomiń kroki 9–11**.
+Wykorzystane w widoku grafiki `Vertical level` i `Scada-LTS-Pump` pochodzą z
+obrazu Scada-LTS. Jeśli później dodasz własne grafiki lub tło przesłane do
+aplikacji, sam eksport JSON nie przeniesie tych plików.
+
+Nie używaj tutaj opcji **Import Project** dla pełnego archiwum ZIP. Taki import
+zastępuje zawartość docelowej bazy, w tym konta użytkowników; służy do pełnego
+odtworzenia instancji, a nie do tego kroku.
+
+## 9. Ręcznie utwórz źródło danych w Scada-LTS (bez eksportu JSON)
+
+Jeśli nie masz pliku eksportu z kroku 8, wykonaj kroki 9–11 ręcznie, jeden raz
+na nowej bazie. Jeśli import się powiódł, nie twórz tych obiektów ponownie.
 
 1. Otwórz [Scada-LTS](http://127.0.0.1:8080/Scada-LTS/).
 2. Zaloguj się: użytkownik **`admin`**, hasło **`admin`**. Ustaw następnie
@@ -169,7 +210,7 @@ Nowa baza jest pusta: punkty i Watch List trzeba utworzyć jeden raz.
 4. Kliknij **Save**. Pozostaw automatycznie wygenerowany **XID**.
 5. Włącz źródło przełącznikiem jego stanu na liście źródeł.
 
-## 9. Utwórz dwa punkty danych
+## 10. Ręcznie utwórz dwa punkty danych
 
 1. Otwórz edycję źródła **`OpenPLC_Tank`**.
 2. W sekcji **Points** kliknij dodawanie punktu (**Add point / +**).
@@ -193,10 +234,10 @@ Nowa baza jest pusta: punkty i Watch List trzeba utworzyć jeden raz.
 Pola nieużywane dla wybranego typu pozostaw domyślne. W edycji właściwości
 `Tank_Level` ustaw **Logging type → All data**, aby zapisywać dane do wykresu.
 
-## 10. Wyświetl wartości i wykres
+## 11. Wyświetl wartości i wykres po ręcznej konfiguracji
 
 1. Otwórz **Watch List**.
-2. Przyciskiem **+** utwórz listę `TankMonitor` i wybierz ją jako aktywną.
+2. Przyciskiem **+** utwórz listę obserwacyjną i wybierz ją jako aktywną.
 3. Otwórz selektor dostępnych punktów. W nowym interfejsie służy do tego
    ikona bazy danych po prawej stronie nagłówka **Point value dashboard**.
 4. Rozwiń źródło `OpenPLC_Tank` i dodaj `Tank_Level` oraz `Tank_PumpCmd`
@@ -209,6 +250,28 @@ Pola nieużywane dla wybranego typu pozostaw domyślne. W edycji właściwości
 polecenie pompy przełącza się między 0/1 lub false/true, a wykres pokazuje
 naprzemienne napełnianie i opróżnianie. Wartość poziomu ma postać np. `50.37`,
 nie `5037`.
+
+## Zapisz późniejsze zmiany HMI w repozytorium
+
+Gdy zmienisz punkty, Watch List albo widok graficzny w Scada-LTS, zaktualizuj
+eksport. Samo kliknięcie **Save** w HMI aktualizuje bazę, ale nie plik w repo.
+
+1. Otwórz [Import/Export](http://127.0.0.1:8080/Scada-LTS/emport.shtm).
+2. W sekcji **Export** zaznacz **Data sources**, **Data points**,
+   **Watch Lists** i **Graphical views**. Nie zaznaczaj **Point values** ani
+   **Users**, jeśli chcesz przenieść tylko konfigurację laboratorium.
+3. Kliknij **Generate JSON**. Skopiuj zawartość pola **Data** i zastąp nią
+   zawartość pliku `hmi/scada-lts-config-ZAIMPORTUJ-DO-SCADALTS.json`.
+4. Sprawdź plik przed dodaniem do Git, szczególnie pod kątem haseł i danych,
+   których nie chcesz publikować. Sprawdź też, czy plik jest śledzony przez Git:
+
+   ```powershell
+   git status --short hmi/scada-lts-config-ZAIMPORTUJ-DO-SCADALTS.json
+   ```
+
+   `??` oznacza nowy, jeszcze nieśledzony plik. Dopóki nie dodasz go do Git i
+   nie opublikujesz zmian, pobranie repozytorium na drugim komputerze go nie
+   zawiera.
 
 ## Kolejne uruchomienia
 
@@ -227,7 +290,8 @@ Nie powtarzaj instalacji, tworzenia kontenera, użytkowników ani punktów HMI.
 3. Pozostaw terminal procesu otwarty. W Editorze połącz się z Runtime i sprawdź
    stan PLC. Jeśli jest zatrzymany, kliknij **Start**; jeśli jest pusty,
    ponownie wykonaj **Build & Upload** i **Start**.
-4. Otwórz Scada-LTS i listę `TankMonitor`.
+4. Otwórz Scada-LTS, listę `Watchlist1` lub widok `Tank_HMI`.
+   Nie powtarzaj importu JSON przy każdym starcie.
 
 ## Zatrzymanie
 
@@ -255,9 +319,11 @@ Nie usuwaj wolumenów: zawierają konta i konfigurację. Nie wykonuj
 | Test `TCP OK` nie przechodzi | Sprawdź uruchomienie serwera Pythona, nasłuch `0.0.0.0:1502` i dostęp aplikacji przez zaporę Windows. |
 | Scada-LTS jeszcze się nie otwiera | Wykonaj `docker compose -f hmi/compose.yaml ps` oraz `docker compose -f hmi/compose.yaml logs --tail 80 scadalts`. Baza musi być `healthy`. |
 | Watch List jest pusta | Dodaj punkty do listy; samo utworzenie punktów nie dodaje ich do widoku. |
-| Są nazwy punktów, lecz brak wartości | Włącz źródło i oba punkty. Sprawdź host `ot-plc`, port `502` oraz niezerowe limity odczytu z kroku 8. |
+| Są nazwy punktów, lecz brak wartości | Włącz źródło i oba punkty. Sprawdź host `ot-plc`, port `502` oraz niezerowe limity odczytu z kroku 9. |
 | `Invalid number of registers: 1` | Ustaw **Max read register count = 125**, zapisz i wyłącz/włącz źródło. |
+| Po pobraniu repozytorium brakuje konfiguracji HMI | Sprawdź, czy plik eksportu JSON był śledzony przez Git i znajduje się w folderze `hmi`. Następnie wykonaj krok 8. |
 | Brak połączenia HMI–PLC po odtworzeniu kontenera | Wykonaj `docker network connect ot-supervision ot-plc`; komunikat, że połączenie już istnieje, oznacza, że ten krok jest wykonany. |
 
 Źródła instalacji: [OpenPLC Runtime — Docker](https://github.com/Autonomy-Logic/openplc-runtime/blob/main/docs/DOCKER.md),
-[Scada-LTS — uruchomienie](https://github.com/SCADA-LTS/Scada-LTS/wiki).
+[Scada-LTS — uruchomienie](https://github.com/SCADA-LTS/Scada-LTS/wiki),
+[Scada-LTS — eksport i import konfiguracji](https://github.com/SCADA-LTS/Scada-LTS/wiki/Remote-Export-and-Import-of-project-configuration).
