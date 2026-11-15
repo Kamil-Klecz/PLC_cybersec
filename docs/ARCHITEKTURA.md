@@ -11,8 +11,9 @@
 
 # Architektura projektu PLCSim
 
-Podstawowym procesem opisywanym przez PLCSim jest sterowanie poziomem wody w zbiorniku (skrypt python)
-za pomocą sterownika PLC (OpenPLC) z wizualizacją (Scada LTS) oraz kontrolą (Suricata).
+Podstawowym procesem opisywanym przez PLCSim jest sterowanie poziomem wody w zbiorniku (skrypt Python)
+za pomocą sterownika PLC (OpenPLC), z wizualizacją w Scada-LTS i pasywnym
+monitorowaniem ruchu sieciowego przez Suricatę.
 
 ## 1. Komponenty i ich role
 
@@ -67,6 +68,29 @@ Obecna Watch List z wartościami i wykresem już pełni funkcję prostego HMI, a
 pracy urządzenia. HMI widzi pomiar dostępny w PLC; podczas eksperymentów może on
 różnić się od rzeczywistego stanu modelu w Pythonie.
 
+### 1.4. IDS Suricata
+
+Suricata 8.0.8 działa w kontenerze `ot-suricata` jako **IDS**: pasywnie analizuje
+pakiety i zapisuje alarmy. Kontener współdzieli przestrzeń sieciową `ot-plc`
+przez `--network container:ot-plc` i przechwytuje ruch na interfejsach `eth0`
+oraz `eth1`: połączenie PLC → proces na porcie 1502 i HMI → PLC na porcie 502.
+Samo dołączenie osobnego kontenera do sieci `ot-supervision` nie zapewniłoby
+widoczności połączenia HMI z PLC.
+
+Lokalna konfiguracja włącza parser Modbus na obu portach. Reguła `sid:1000003`
+w `suricata/etc/rules/local.rules` alarmuje przy żądaniu zapisu do serwera PLC
+na porcie 502. Normalne HMI odczytuje dane z PLC, natomiast PLC regularnie
+zapisuje polecenie pompy do procesu na porcie 1502. Alarm na każdy zapis do
+procesu generowałby więc wiele alarmów podczas prawidłowej pracy. Zdarzenia
+IDS trafiają do `suricata/logs/eve.json`. Alarm nie blokuje pakietu i nie
+pojawia się automatycznie w interfejsie Scada-LTS.
+
+Lokalnie potwierdzono start czujnika na obu interfejsach oraz wcześniejsze
+alarmy testowych reguł dla obu ścieżek odczytu i jednego zapisu do PLC.
+Pliki `suricata/` są obecnie nieśledzone przez Git, więc nie będą dostępne
+w repozytorium pobranym na nowym komputerze. Odtworzenie instalacji opisuje
+[instrukcja uruchamiania](URUCHAMIANIE.md#12-dodaj-suricatę-jako-pasywny-ids).
+
 
 ## 2. Hosting i połączenia
 
@@ -76,6 +100,7 @@ różnić się od rzeczywistego stanu modelu w Pythonie.
 |---|---|---|
 | Symulator procesu | Skrypt na hoście Windows, środowisko `.venv` | `process_server.py`, nasłuch `0.0.0.0:1502`. |
 | PLC | Kontener Linux `ot-plc` w Docker Desktop | Używany obraz lokalny `ot-lab/openplc-runtime:baseline`; projekt znajduje się w `TankControl/`. |
+| IDS | Kontener Linux `ot-suricata` współdzielący sieć `ot-plc` | Obraz `jasonish/suricata:8.0.8`; nasłuch `eth0` i `eth1`, konfiguracja w `suricata/etc/`, logi w `suricata/logs/`. |
 | OpenPLC Editor | Aplikacja na Windowsie | Zarządza Runtime pod `127.0.0.1:8443`. |
 | HMI | Usługa `scadalts` projektu Compose `ot-hmi` | Obraz `scadalts/scadalts:latest`, kontener przy domyślnym nazewnictwie `ot-hmi-scadalts-1`. |
 | Baza HMI | Usługa `database` tego samego projektu Compose | Kontener `ot-hmi-database-1`, baza `scadalts`. |
@@ -98,6 +123,7 @@ flowchart LR
         subgraph Docker["Docker Desktop — kontenery Linux"]
             HMI["Scada-LTS"]
             PLC["OpenPLC Runtime: ot-plc"]
+            IDS["Suricata IDS: ot-suricata"]
             DB["MySQL: database"]
         end
     end
@@ -106,6 +132,7 @@ flowchart LR
     HMI -->|"Modbus TCP: ot-plc:502"| PLC
     PLC -->|"Modbus TCP: host.docker.internal:1502"| Process
     HMI -->|"JDBC / MySQL: database:3306"| DB
+    PLC -.->|"wspólna przestrzeń sieciowa; obserwacja portów 502 i 1502"| IDS
 ```
 
 | Inicjator → odbiorca | Protokół i port docelowy | Cel |
@@ -118,8 +145,10 @@ flowchart LR
 
 Port 1502 należy do serwera procesu, a port 502 do serwera w PLC. 
 PLC pełni więc równocześnie rolę klienta i serwera Modbus, ale dla dwóch różnych połączeń.
+Linia przerywana do IDS oznacza obserwację ruchu, a nie kolejne połączenie
+Modbus ani przekazywanie pakietów przez Suricatę.
 
-### 2.4. Mapa danych i przebieg sterowania
+### 2.3. Mapa danych i przebieg sterowania
 
 | Sygnał | Proces Python | Obraz I/O i zmienna PLC | Udostępnienie dla HMI |
 |---|---|---|---|
@@ -148,23 +177,27 @@ PLC ani procesu.
 - Działająca pętla Python ↔ OpenPLC przez Modbus TCP.
 - Serwer Modbus w PLC udostępniający dane dla HMI.
 - Watchdog ostatniego zapisu polecenia pompy w symulatorze (test lokalny Modbus).
+- Lokalnie uruchomiona Suricata jako IDS z regułą zapisu do PLC; potwierdzony
+  start na obu interfejsach i alarmy testowe. Jej pliki nie są jeszcze śledzone przez Git.
 
 ### 3.2. Do zrobienia
 
-- Suricata
+- Udostępnienie konfiguracji i reguł Suricaty w repozytorium oraz ustalenie
+  retencji logów.
 - Firewall
 - Próba z zamrożonym PLC po uruchomieniu zmodyfikowanego symulatora i porównanie
   przebiegów przed/po watchdogu.
 
 ## 4. Struktura folderów i plików
 
-Drzewo pokazuje pliki obecne podczas przygotowania dokumentacji oraz niniejszy
-dokument. Wnętrze środowiska Pythona i katalogów pamięci podręcznej pominięto.
+Drzewo pokazuje główne pliki i katalogi obecne lokalnie. Wnętrze środowiska
+Pythona, katalogów pamięci podręcznej i konfiguracji Suricaty pominięto.
 
 ```text
 PLCSim/
 ├── docs/
-│   └── ARCHITEKTURA.md
+│   ├── ARCHITEKTURA.md
+│   └── URUCHAMIANIE.md
 ├── hmi/
 │   ├── compose.yaml
 │   └── README.md
@@ -180,6 +213,11 @@ PLCSim/
 │   └── pous/
 │       └── programs/
 │           └── main.st
+├── suricata/             # lokalnie istnieje, obecnie nieśledzony przez Git
+│   ├── etc/
+│   │   ├── suricata.yaml
+│   │   └── rules/local.rules
+│   └── logs/             # lokalne wyniki działania czujnika
 ├── old/
 │   ├── controller.py
 │   ├── process.py
@@ -234,3 +272,13 @@ programu w kontenerze: potrzebne jest zbudowanie i przesłanie projektu.
 - `README.md` zawiera instrukcję konfiguracji serwera PLC, źródła Modbus,
   punktów HMI, limitów odczytu oraz propozycje widoków i alarmów. Obecność
   instrukcji nie oznacza, że wszystkie opisane opcje zostały już wdrożone.
+
+### 4.4. Suricata: `suricata/`
+
+- `etc/suricata.yaml` włącza parser Modbus dla portów 502 i 1502 oraz zapis EVE JSON.
+- `etc/rules/local.rules` zawiera lokalną regułę alarmującą na zapis do PLC.
+- `logs/` zawiera wyniki uruchomień, w tym `eve.json` i `fast.log`.
+
+Katalog powstał lokalnie i nie jest obecnie śledzony przez Git. Przy
+przenoszeniu laboratorium należy przenieść konfigurację i reguły, ale
+oddzielić je od wynikowych logów.

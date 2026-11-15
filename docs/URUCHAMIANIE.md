@@ -256,6 +256,184 @@ polecenie pompy przełącza się między 0/1 lub false/true, a wykres pokazuje
 naprzemienne napełnianie i opróżnianie. Wartość poziomu ma postać np. `50.37`,
 nie `5037`.
 
+## 12. Dodaj Suricatę jako pasywny IDS
+
+Suricata analizuje pakiety Modbus i zapisuje alarmy, ale w tej konfiguracji
+nie blokuje ruchu. Uruchamiaj ją dopiero po utworzeniu i uruchomieniu `ot-plc`.
+Czujnik współdzieli przestrzeń sieciową PLC, ponieważ zwykłe dołączenie go
+do `ot-supervision` nie pozwala podsłuchiwać połączeń innych kontenerów.
+
+Poniższe polecenia wykonuj w PowerShellu w katalogu projektu. Na nowym
+komputerze będzie to przykładowo `C:\OT\PLCSim`; na obecnym komputerze
+`D:\Coding\repos\PLC_cybersec`. Przed wykonaniem następnych kroków sprawdź
+lokalizację i działanie PLC:
+
+```powershell
+Get-Location
+docker ps --filter name=ot-plc
+```
+
+### 12.1. Przygotuj obraz i pliki
+
+```powershell
+docker pull jasonish/suricata:8.0.8
+New-Item -ItemType Directory -Force -Path .\suricata\etc, .\suricata\logs | Out-Null
+$repo = (Get-Location).Path
+
+if (-not (Test-Path .\suricata\etc\suricata.yaml)) {
+    docker run --rm `
+      --mount "type=bind,source=$repo\suricata\etc,target=/etc/suricata" `
+      jasonish/suricata:8.0.8 -V
+}
+
+Test-Path .\suricata\etc\suricata.yaml
+```
+
+**Co robi ten krok:** pobiera ustaloną wersję obrazu i, tylko gdy plik nie
+istnieje, kopiuje domyślną konfigurację z obrazu do katalogu projektu.
+Ostatnie polecenie powinno zwrócić `True`. Na obecnym komputerze plik jest
+już przygotowany, więc blok `if` go nie nadpisze.
+
+### 12.2. Włącz parser Modbus i zapis zdarzeń
+
+Otwórz `suricata/etc/suricata.yaml`:
+
+```powershell
+notepad .\suricata\etc\suricata.yaml
+```
+
+W sekcji `app-layer` → `protocols` znajdź **istniejący** blok `modbus:`.
+Ustaw w nim `enabled: yes` oraz oba porty docelowe; nie dodawaj drugiego
+bloku o tej samej nazwie:
+
+```yaml
+    modbus:
+      enabled: yes
+      detection-ports:
+        dp: 502, 1502
+      stream-depth: 0
+```
+
+W istniejącym bloku `eve-log:` sprawdź `enabled: yes` i `filename: eve.json`.
+Zachowaj wcięcia YAML i zapisz plik.
+
+**Co robi ten krok:** Suricata domyślnie ma parser Modbus wyłączony. Port
+`502` należy do serwera PLC dla HMI, a `1502` do serwera procesu dla PLC.
+`eve.json` będzie zawierał alarmy w formacie JSON. Na obecnym komputerze
+te ustawienia są już zapisane.
+
+### 12.3. Dodaj regułę lokalną
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\suricata\etc\rules | Out-Null
+
+if (-not (Test-Path .\suricata\etc\rules\local.rules)) {
+@'
+alert modbus any any -> any 502 (msg:"LAB nieoczekiwany zapis Modbus do PLC"; flow:to_server; modbus: access write; sid:1000003; rev:1;)
+'@ | Set-Content -LiteralPath .\suricata\etc\rules\local.rules -Encoding ascii
+}
+
+Get-Content .\suricata\etc\rules\local.rules
+```
+
+**Co robi ten krok:** reguła alarmuje, gdy klient wyśle żądanie zapisu
+Modbus do PLC na porcie 502. Zwykłe HMI tylko odczytuje dane. Normalny zapis
+PLC do procesu na porcie 1502 nie wywołuje tej reguły. `sid` jest
+identyfikatorem alarmu. Blok `if` zachowuje istniejące lokalne reguły.
+
+### 12.4. Sprawdź konfigurację i uruchom czujnik
+
+```powershell
+$repo = (Get-Location).Path
+
+docker run --rm `
+  --mount "type=bind,source=$repo\suricata\etc,target=/etc/suricata" `
+  --mount "type=bind,source=$repo\suricata\logs,target=/var/log/suricata" `
+  jasonish/suricata:8.0.8 `
+  -T -c /etc/suricata/suricata.yaml -S /etc/suricata/rules/local.rules
+```
+
+**Co robi ten krok:** `-T` sprawdza YAML i reguły bez uruchamiania
+przechwytywania; `-S` ładuje tylko wskazany plik reguł. Wymagany jest
+komunikat o pomyślnym załadowaniu konfiguracji i zero błędów reguł.
+
+Na obecnym komputerze PLC ma interfejsy `eth0` i `eth1`. Na nowym komputerze
+potwierdź ich obecność przez `docker exec ot-plc cat /proc/net/dev`. Następnie
+uruchom IDS:
+
+```powershell
+docker run -d --rm --name ot-suricata `
+  --network container:ot-plc `
+  --cap-add NET_RAW --cap-add NET_ADMIN --cap-add SYS_NICE `
+  --mount "type=bind,source=$repo\suricata\etc,target=/etc/suricata" `
+  --mount "type=bind,source=$repo\suricata\logs,target=/var/log/suricata" `
+  jasonish/suricata:8.0.8 `
+  -i eth0 -i eth1 -S /etc/suricata/rules/local.rules
+
+docker ps --filter name=ot-suricata
+docker logs --tail 40 ot-suricata
+```
+
+**Co robi ten krok:** `--network container:ot-plc` udostępnia czujnikowi
+interfejsy PLC, a `-i` rozpoczyna przechwytywanie na obu. `--rm` usuwa
+zatrzymany kontener, lecz konfiguracja i logi pozostają w katalogu projektu.
+W logu startowym sprawdź załadowanie reguły oraz aktywację `eth0` i `eth1`.
+Jeśli `ot-suricata` już działa, nie wykonuj drugiego `docker run` o tej samej
+nazwie; sprawdź go przez `docker ps` i `docker logs`.
+
+### 12.5. Potwierdź alarm
+
+Sprawdź plik zdarzeń:
+
+```powershell
+Test-Path .\suricata\logs\eve.json
+Get-Content .\suricata\logs\eve.json -Tail 500 |
+  ConvertFrom-Json |
+  Where-Object { $_.event_type -eq 'alert' } |
+  Select-Object timestamp, src_ip, dest_ip,
+    @{Name='sid';Expression={$_.alert.signature_id}},
+    @{Name='opis';Expression={$_.alert.signature}}
+```
+
+**Co robi ten krok:** odczytuje alarmy z EVE JSON. Samo istnienie pliku
+potwierdza zapis logu, ale nie potwierdza jeszcze, że reguła wykryła zapis.
+Do kontrolnego testu wyślij jedno żądanie FC06 z osobnego kontenera w sieci
+`ot-supervision`:
+
+```powershell
+docker run --rm --network ot-supervision python:3.13-alpine `
+  python -c "import socket; p=bytes.fromhex('00 01 00 00 00 06 01 06 ff ff 00 01'); s=socket.create_connection(('ot-plc',502),3); s.sendall(p); print(s.recv(260).hex(' ')); s.close()"
+```
+
+**Co robi ten krok:** wysyła próbę zapisu rejestru o adresie `65535`, poza
+adresami używanymi w projekcie. PLC może odpowiedzieć wyjątkiem Modbus;
+istotne jest, czy w `eve.json` pojawi się alarm `sid:1000003`. Ponów
+polecenie odczytu alarmów powyżej. Alarm oznacza detekcję, nie blokadę.
+
+Jeśli chcesz osobno potwierdzić widoczność **obu** połączeń, dodaj chwilowo
+do `local.rules` poniższe reguły, sprawdź konfigurację, zatrzymaj czujnik
+poleceniem `docker stop ot-suricata` i uruchom go ponownie. Po zobaczeniu
+`sid:1000001` oraz `sid:1000002` usuń te dwie linie i ponownie uruchom
+czujnik, aby normalne odczyty nie wypełniały logu:
+
+```text
+alert modbus any any -> any 1502 (msg:"LAB test odczytu poziomu PLC-proces FC04"; flow:to_server; modbus: function 4; sid:1000001; rev:1;)
+alert modbus any any -> any 502 (msg:"LAB test odczytu poziomu HMI-PLC FC04"; flow:to_server; modbus: function 4; sid:1000002; rev:1;)
+```
+
+Przy istniejących połączeniach TCP czujnik uruchomiony w środku sesji może
+nie sklasyfikować pierwszych obserwowanych pakietów. Wtedy ponów test po
+nawiązaniu nowych połączeń przez klientów. Lokalnie potwierdzono wcześniej
+alarmy obu reguł testowych i jeden alarm zapisu do PLC.
+
+### 12.6. Przygotuj pliki do przeniesienia
+
+Konfiguracja i reguły w `suricata/etc/` istnieją na obecnym komputerze,
+ale katalog `suricata/` nie jest obecnie śledzony przez Git. Dopóki nie
+zostanie dodany i opublikowany, nowy komputer nie otrzyma tych plików z
+repozytorium. Logi `suricata/logs/` są wynikami eksperymentów; dopisz
+`suricata/logs/` do `.gitignore` przed dodawaniem katalogu do Git.
+
 ## Zapisz późniejsze zmiany HMI w repozytorium
 
 Gdy zmienisz punkty, Watch List albo widok graficzny w Scada-LTS, zaktualizuj
@@ -280,7 +458,7 @@ eksport. Samo kliknięcie **Save** w HMI aktualizuje bazę, ale nie plik w repo.
 
 ## Kolejne uruchomienia
 
-Nie powtarzaj instalacji, tworzenia kontenera, użytkowników ani punktów HMI.
+Nie powtarzaj instalacji, tworzenia kontenera PLC, użytkowników ani punktów HMI.
 
 1. Uruchom Docker Desktop.
 2. W PowerShellu:
@@ -289,20 +467,25 @@ Nie powtarzaj instalacji, tworzenia kontenera, użytkowników ani punktów HMI.
    cd C:\OT\PLCSim
    docker compose -f hmi/compose.yaml up -d
    docker start ot-plc
-   .\.venv\Scripts\python.exe process_server.py
    ```
 
-3. Pozostaw terminal procesu otwarty. W Editorze połącz się z Runtime i sprawdź
+3. Uruchom Suricatę poleceniem `docker run -d ...` z kroku 12.4 i sprawdź
+   `docker ps --filter name=ot-suricata`. Czujnik musi startować po `ot-plc`.
+4. W drugim oknie PowerShella, również w katalogu projektu, uruchom
+   `.\.venv\Scripts\python.exe process_server.py` i pozostaw terminal otwarty.
+5. W Editorze połącz się z Runtime i sprawdź
    stan PLC. Jeśli jest zatrzymany, kliknij **Start**; jeśli jest pusty,
    ponownie wykonaj **Build & Upload** i **Start**.
-4. Otwórz Scada-LTS, listę `Watchlist1` lub widok `Tank_HMI`.
+6. Otwórz Scada-LTS, listę `Watchlist1` lub widok `Tank_HMI`.
    Nie powtarzaj importu JSON przy każdym starcie.
 
 ## Zatrzymanie
 
-1. W Editorze zatrzymaj PLC przyciskiem **Stop**.
-2. W terminalu procesu naciśnij **Ctrl+C**.
-3. W drugim PowerShellu, w folderze projektu:
+1. W PowerShellu zatrzymaj IDS poleceniem `docker stop ot-suricata`.
+   Kontener z opcją `--rm` zostanie usunięty; pliki w `suricata/` pozostaną.
+2. W Editorze zatrzymaj PLC przyciskiem **Stop**.
+3. W terminalu procesu naciśnij **Ctrl+C**.
+4. W drugim PowerShellu, w folderze projektu:
 
    ```powershell
    docker stop ot-plc
@@ -328,7 +511,14 @@ Nie usuwaj wolumenów: zawierają konta i konfigurację. Nie wykonuj
 | `Invalid number of registers: 1` | Ustaw **Max read register count = 125**, zapisz i wyłącz/włącz źródło. |
 | Po pobraniu repozytorium brakuje konfiguracji HMI | Sprawdź, czy plik eksportu JSON był śledzony przez Git i znajduje się w folderze `hmi`. Następnie wykonaj krok 8. |
 | Brak połączenia HMI–PLC po odtworzeniu kontenera | Wykonaj `docker network connect ot-supervision ot-plc`; komunikat, że połączenie już istnieje, oznacza, że ten krok jest wykonany. |
+| `ot-suricata` nie startuje | Sprawdź, czy działa `ot-plc`, czy nie ma już kontenera o nazwie `ot-suricata`, oraz uruchom test `-T` z kroku 12.4. Odczytaj `docker logs ot-suricata`, jeśli kontener nadal istnieje. |
+| Brak `suricata/logs/eve.json` | Sprawdź wynik `docker logs --tail 40 ot-suricata`, ścieżkę montowania `suricata/logs/` i ustawienia `eve-log` w `suricata.yaml`. |
+| Jest `eve.json`, ale brak alarmu testowego | Sprawdź, czy załadowano regułę `1000003`, czy czujnik obserwuje `eth0` i `eth1`, a testowy klient łączy się z `ot-plc:502`. Plik logu bez alarmów nie potwierdza działania reguły. |
 
 Źródła instalacji: [OpenPLC Runtime — Docker](https://github.com/Autonomy-Logic/openplc-runtime/blob/main/docs/DOCKER.md),
 [Scada-LTS — uruchomienie](https://github.com/SCADA-LTS/Scada-LTS/wiki),
-[Scada-LTS — eksport i import konfiguracji](https://github.com/SCADA-LTS/Scada-LTS/wiki/Remote-Export-and-Import-of-project-configuration).
+[Scada-LTS — eksport i import konfiguracji](https://github.com/SCADA-LTS/Scada-LTS/wiki/Remote-Export-and-Import-of-project-configuration),
+[Suricata 8.0.8 — opcje programu](https://docs.suricata.io/en/suricata-8.0.8/command-line-options.html),
+[Suricata 8.0.8 — reguły Modbus](https://docs.suricata.io/en/suricata-8.0.8/rules/modbus-keyword.html),
+[obraz `jasonish/suricata`](https://github.com/jasonish/docker-suricata/blob/main/README.md),
+[Docker — współdzielenie sieci kontenera](https://docs.docker.com/engine/network/).

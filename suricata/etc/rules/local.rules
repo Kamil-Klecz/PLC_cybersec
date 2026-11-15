@@ -1,0 +1,1 @@
+alert modbus any any -> any 502 (msg:"LAB nieoczekiwany zapis Modbus do PLC"; flow:to_server; modbus: access write; sid:1000003; rev:1;)

@@ -1,0 +1,30 @@
+
+kontener HMI:
+cd D:\Coding\repos\PLC_cybersec
+docker compose -f hmi/compose.yaml up -d
+docker compose -f hmi/compose.yaml ps
+
+
+Model zbiornika:
+cd D:\Coding\repos\PLC_cybersec
+.\.venv\Scripts\python.exe process_server.py
+
+
+kontener PLC:
+docker start ot-plc
+docker ps --filter name=ot-plc
+
+PLC:
+W OpenPLC Editor uruchomić runtime pod 127.0.0.1  (Login: admin admin)
+Otworzyć Scada-LTS  -  http://127.0.0.1:8080/Scada-LTS/     (Login: admin admin)
+
+Suricata:
+$repo = (Get-Location).Path
+
+docker run -d --rm --name ot-suricata `
+  --network container:ot-plc `
+  --cap-add NET_RAW --cap-add NET_ADMIN --cap-add SYS_NICE `
+  --mount "type=bind,source=$repo\suricata\etc,target=/etc/suricata" `
+  --mount "type=bind,source=$repo\suricata\logs,target=/var/log/suricata" `
+  jasonish/suricata:8.0.8 `
+  -i eth0 -i eth1 -S /etc/suricata/rules/local.rules
